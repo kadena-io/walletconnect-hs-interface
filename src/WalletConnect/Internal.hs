@@ -73,8 +73,8 @@ makePairing client pairing = liftJSM $ do
   -- logValue "makePairing"
   -- logValue pairing
   topic <- valToText =<< pairing ! "topic"
-  pk <- valToText =<< flip (!) "publicKey" =<< pairing ! "peer"
-  metadata <- getMetadata =<< pairing ! "state"
+  peer <- valToText =<< flip (!) "publicKey" =<< pairing ! "peer"
+  state <- getMetadata =<< pairing ! "state"
   permissions <- getPermissions pairing
   let
     connect = void . doConnect client (Just topic)
@@ -87,7 +87,7 @@ makePairing client pairing = liftJSM $ do
         pure o
       pairing <- client ! "pairing"
       void $ pairing ^. js1 "delete" args
-  pure $ Pairing topic (pk, metadata) permissions connect delete
+  pure $ Pairing topic peer state permissions connect delete
 
 doConnect :: JSVal -> Maybe Topic -> (Permissions, Metadata) -> JSM JSVal
 doConnect client mTopic (permissions, metadata) = do

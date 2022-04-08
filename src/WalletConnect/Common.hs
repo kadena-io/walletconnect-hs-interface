@@ -38,7 +38,8 @@ data Request = Request
 
 data Pairing = Pairing
   { _pairing_topic :: Topic
-  , _pairing_peer :: (PublicKey, Metadata)
+  , _pairing_peer :: PublicKey
+  , _pairing_state :: Metadata -- This is always the responder's metadata (ie wallet)
   , _pairing_permissions :: Permissions
   , _pairing_connect :: (Permissions, Metadata) -> JSM ()
   , _pairing_delete :: JSM ()
