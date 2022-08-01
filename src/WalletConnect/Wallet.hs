@@ -51,10 +51,11 @@ data Session = Session
   }
 
 data Proposal = Proposal
-  { _proposal_topic :: Topic
-  , _proposal_ttl :: Int
+  { _proposal_id :: Int
+  , _proposal_topic :: Topic
+  , _proposal_expiry :: Int
   , _proposal_proposer :: (PublicKey, Metadata)
-  , _proposal_permissions :: Permissions
+  , _proposal_namespaces :: [ProposalNamespace]
   , _proposal_approval :: (Either () [Account] -> JSM ())
   }
 
@@ -152,21 +153,19 @@ subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsActi
 
   liftIO $ putMVar clientMVar client
 
-  wcc <- jsg "WalletConnectClient"
-  events <- wcc ! "CLIENT_EVENTS"
-  pairing <- events ! "pairing"
-  session <- events ! "session"
+  wcc <- jsg "WalletConnectSignClient"
+  events <- wcc ! "SIGN_CLIENT_EVENTS"
 
   let
-    onProposal = fun $ \_ _ [proposal] -> do
-      -- logValue "onProposal"
-      -- logValue proposal
-      topic <- valToText =<< proposal ! "topic"
-      permissions <- getPermissions proposal
-      ttl <- fromJSValUnchecked =<< proposal ! "ttl"
-      proposer <- do
+    onProposal = fun $ \_ _ [propEvent] -> do
+      id <- valToText =<< propEvent ! "id"
+      propParams <- propEvent ! "params"
+      topic <- valToText =<< propParams ! "pairingTopic"
+      ttl <- fromJSValUnchecked =<< propParams ! "expiry"
+      namespaces <- getNamespaces propParams
+      proposer <-
         getMetadataPublicKey =<< proposal ! "proposer"
-      liftIO $ proposalAction $ Proposal topic ttl proposer permissions (either (doReject proposal) (doApprove proposal))
+      liftIO $ proposalAction $ Proposal id topic ttl proposer namespaces (either (doReject proposal) (doApprove proposal))
 
     doReject proposal _ = do
       args <- do
@@ -192,8 +191,7 @@ subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsActi
         pure o
       void $ client ^. js1 "approve" args
 
-  proposal <- session ! "proposal"
-  client ^. js2 "on" proposal onProposal
+  client ^. js2 "on" "session_proposal" onProposal
 
   let
     onRequest = fun $ \_ _ [requestEvent] -> do

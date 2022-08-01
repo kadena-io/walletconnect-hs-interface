@@ -24,9 +24,15 @@ data Metadata = Metadata
   }
   deriving (Show, Generic)
 
-data Permissions = Permissions
-  { _permissions_chains :: [Text]
-  , _permissions_methods :: [Text]
+-- TODO: Fix according to spec
+data NamespaceExtension
+data Permissions
+
+data ProposalNamespace = ProposalNamespace
+  { _pNamespace_methods :: [Text]
+  , _pNamespace_chains :: [Text]
+  , _pNamespace_events :: [Text]
+  , _pNamespace_extensions :: Maybe [NamespaceExtension]
   }
   deriving (Show, Generic)
 

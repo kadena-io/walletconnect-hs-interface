@@ -28,6 +28,8 @@ import qualified Language.Javascript.JSaddle   as JSaddle
 
 import WalletConnect.Common
 
+-- EDIT: NEW NOTE: I think isController was deprecated in latest version bump but need to double
+-- check
 -- Note on isController
 -- https://github.com/WalletConnect/walletconnect-docs/blob/main/docs/protocol/tech-spec.md
 -- If you notice the proposer is identified by a controller boolean. When false
@@ -36,8 +38,8 @@ import WalletConnect.Common
 -- permissions.
 clientInit :: Maybe Text -> Text -> Bool -> JSM JSVal
 clientInit mRelayUrl projectId isController = do
-  wcc <- jsg "WalletConnectClient"
-  client <- wcc ! "Client"
+  wcc <- jsg "WalletConnectSignClient"
+  client <- wcc ! "SignClient"
   args <- do
     o <- create
     (o <# "logger") ("debug" :: Text)
@@ -45,7 +47,7 @@ clientInit mRelayUrl projectId isController = do
     -- so always specify one here.
     (o <# "relayUrl") (fromMaybe "wss://relay.walletconnect.org" mRelayUrl)
     (o <# "projectId") projectId
-    (o <# "controller") isController
+    -- (o <# "controller") isController
     pure o
   client ^. js1 "init" args
 
@@ -61,11 +63,12 @@ getMetadata v = liftJSM $ do
     Just (A.Success m) -> m
     _ -> Metadata "unknown" "" [] ""
 
-getPermissions :: (MonadJSM m) => JSVal -> m Permissions
-getPermissions obj = liftJSM $ do
-  v <- fromJSValUnchecked =<< obj ! "permissions"
-  pure $ case A.fromJSON v of
-    A.Error _ -> Permissions [] []
+getNamespaces :: (MonadJSM m) => JSVal -> m ProposalNamespace
+getNamespaces obj = liftJSM $ do
+  v <- obj ! "requiredNamespaces"
+  v' <- fromJSValUnchecked =<< v ! "kadena" -- TODO: Hardcoded value
+  pure $ case A.fromJSON v' of
+    A.Error _ -> ProposalNamespace [] [] [] Nothing
     A.Success p -> p
 
 makePairing :: MonadJSM m => JSVal -> JSVal -> m Pairing
