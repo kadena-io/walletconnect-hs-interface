@@ -28,14 +28,6 @@ import qualified Language.Javascript.JSaddle   as JSaddle
 
 import WalletConnect.Common
 
--- EDIT: NEW NOTE: I think isController was deprecated in latest version bump but need to double
--- check
--- Note on isController
--- https://github.com/WalletConnect/walletconnect-docs/blob/main/docs/protocol/tech-spec.md
--- If you notice the proposer is identified by a controller boolean. When false
--- it means that the proposer will not control the settled session which means
--- that it does not update state, upgrade permissions and is bounded by the
--- permissions.
 clientInit :: Maybe Text -> Text -> Bool -> JSM JSVal
 clientInit mRelayUrl projectId isController = do
   wcc <- jsg "WalletConnectSignClient"
@@ -43,11 +35,8 @@ clientInit mRelayUrl projectId isController = do
   args <- do
     o <- create
     (o <# "logger") ("debug" :: Text)
-    -- The default specified in client (relay.wallet-connect.com) does not work
-    -- so always specify one here.
-    (o <# "relayUrl") (fromMaybe "wss://relay.walletconnect.org" mRelayUrl)
+    (o <# "relayUrl") "wss://relay.walletconnect.com" -- (fromMaybe "wss://relay.walletconnect.org" mRelayUrl)
     (o <# "projectId") projectId
-    -- (o <# "controller") isController
     pure o
   client ^. js1 "init" args
 
@@ -61,80 +50,96 @@ getMetadata v = liftJSM $ do
   mMetadata <- mapM fromJSVal =<< maybeNullOrUndefined =<< v ! "metadata"
   pure $ case A.fromJSON <$> join mMetadata of
     Just (A.Success m) -> m
-    _ -> Metadata "unknown" "" [] ""
+    _ -> emptyWCMeta
 
-getNamespaces :: (MonadJSM m) => JSVal -> m ProposalNamespace
+getPeerMetadata :: (MonadJSM m) => JSVal -> m Metadata
+getPeerMetadata meta = liftJSM $ do
+  mMetadata <- mapM fromJSVal =<< maybeNullOrUndefined meta
+  pure $ case A.fromJSON <$> join mMetadata of
+    Just (A.Success m) -> m
+    _ -> emptyWCMeta
+
+getNamespaces :: (MonadJSM m) => JSVal -> m [ProposalNamespace]
 getNamespaces obj = liftJSM $ do
   v <- obj ! "requiredNamespaces"
   v' <- fromJSValUnchecked =<< v ! "kadena" -- TODO: Hardcoded value
   pure $ case A.fromJSON v' of
-    A.Error _ -> ProposalNamespace [] [] [] Nothing
-    A.Success p -> p
+    A.Error _ -> []
+    A.Success p -> [p]
 
-makePairing :: MonadJSM m => JSVal -> JSVal -> m Pairing
-makePairing client pairing = liftJSM $ do
-  -- logValue "makePairing"
-  -- logValue pairing
-  topic <- valToText =<< pairing ! "topic"
-  peer <- valToText =<< flip (!) "publicKey" =<< pairing ! "peer"
-  state <- getMetadata =<< pairing ! "state"
-  permissions <- getPermissions pairing
-  let
-    connect = void . doConnect client (Just topic)
-    delete = do
-      -- logValue $ "doing disconnect of " <> topic
-      args <- do
-        o <- create
-        (o <# "topic") topic
-        (o <# "reason") ("USER_DISCONNECTED" :: Text) -- todo
-        pure o
-      pairing <- client ! "pairing"
-      void $ pairing ^. js1 "delete" args
-  pure $ Pairing topic peer state permissions connect delete
+-- makeSession :: (MonadJSM m) => JSVal -> JSVal -> m Session
+-- makeSession client session = do
+--   -- liftJSM $ do
+--   --   logValue "makeSession"
+--   --   logValue session
+--   topic <- liftJSM $ valToText =<< session ! "topic"
+--   peer <- liftJSM $ getMetadataPublicKey =<< session ! "peer"
+--   let
+--     delete = do
+--       -- logValue $ "doing disconnect of " <> topic
+--       args <- do
+--         o <- create
+--         (o <# "topic") topic
+--         (o <# "reason") ("USER_DISCONNECTED" :: Text) -- todo
+--         pure o
+--       void $ client ^. js1 "disconnect" args
+--   return $ Session topic delete peer
 
-doConnect :: JSVal -> Maybe Topic -> (Permissions, Metadata) -> JSM JSVal
-doConnect client mTopic (permissions, metadata) = do
-  -- logValue "doConnect"
-  args <- do
-    o <- create
-    (o <# "permissions") =<< toJSVal (A.toJSON permissions)
-    (o <# "metadata") =<< toJSVal (A.toJSON metadata)
-    forM mTopic $ \topic -> do
-      pairing <- do
-        o <- create
-        (o <# "topic") topic
-        pure o
-      (o <# "pairing") pairing
-    pure o
-  -- logValue args
-  client ^. js1 "connect" args
+--makePairing :: MonadJSM m => JSVal -> JSVal -> m Pairing
+--makePairing client pairing = liftJSM $ do
+--  -- logValue "makePairing"
+--  topic <- valToText =<< pairing ! "topic"
+--  --TODO `getMetadata` doesnt work on peerMetadata
+--  peerMeta <- getPeerMetadata =<< pairing ! "peerMetadata"
+--  isActive <- valToBool =<< pairing ! "active"
+--  -- expiry <- valToNumber =<< pairing ! "expiry"
+--  let
+--    connect = void . doConnect client (Just topic)
+--    delete = do
+--      -- logValue $ "doing disconnect of " <> topic
+--      args <- do
+--        o <- create
+--        (o <# "topic") topic
+--        (o <# "reason") ("USER_DISCONNECTED" :: Text) -- todo
+--        pure o
+--      pairing <- client ! "pairing"
+--      void $ pairing ^. js1 "delete" args
+--  pure $ Pairing topic Nothing peerMeta isActive connect delete
+--  where
+--    doConnect :: JSVal -> Maybe Topic -> (Permissions, Metadata) -> JSM JSVal
+--    doConnect client mTopic (permissions, metadata) = do
+--      -- logValue "doConnect"
+--      args <- do
+--        o <- create
+--        (o <# "permissions") =<< toJSVal (A.toJSON permissions)
+--        (o <# "metadata") =<< toJSVal (A.toJSON metadata)
+--        forM mTopic $ \topic -> do
+--          pairing <- do
+--            o <- create
+--            (o <# "topic") topic
+--            pure o
+--          (o <# "pairing") pairing
+--        pure o
+--      -- logValue args
+--      client ^. js1 "connect" args
 
-doPair uri client = do
-  -- logValue "doPair"
-  -- logValue uri
-  args <- do
-    o <- create
-    (o <# "uri") uri
-    pure o
-  client ^. js1 "pair" args
-
-doRequest :: JSVal -> Topic -> Request -> JSM JSVal
-doRequest client topic (Request chainId method params) = do
-  -- logValue "doRequest"
-  -- logValue topic
-  args <- do
-    o <- create
-    (o <# "topic") topic
-    (o <# "chainId") =<< toJSVal chainId
-    request <- do
-      o <- create
-      (o <# "method") =<< toJSVal method
-      (o <# "params") =<< toJSVal params
-      pure o
-    (o <# "request") request
-    pure o
-  -- logValue args
-  client ^. js1 "request" args
+-- doRequest :: JSVal -> Topic -> Request -> JSM JSVal
+-- doRequest client topic (Request chainId method params) = do
+--   -- logValue "doRequest"
+--   -- logValue topic
+--   args <- do
+--     o <- create
+--     (o <# "topic") topic
+--     (o <# "chainId") =<< toJSVal chainId
+--     request <- do
+--       o <- create
+--       (o <# "method") =<< toJSVal method
+--       (o <# "params") =<< toJSVal params
+--       pure o
+--     (o <# "request") request
+--     pure o
+--   -- logValue args
+--   client ^. js1 "request" args
 
 doRespond :: JSVal -> Topic -> JSVal -> Either () JSVal -> JSM ()
 doRespond client topic id' result = do
