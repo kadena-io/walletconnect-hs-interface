@@ -87,7 +87,7 @@ initWalletConnect mRelayUrl projectId = do
   clientMVar <- liftIO $ newEmptyMVar
 
   liftJSM $ do
-    clientPromise <- clientInit mRelayUrl projectId True
+    clientPromise <- clientInit mRelayUrl projectId
     clientPromise ^. js2 "then"
       (subscribeToEvents clientMVar reqAction proposalAction sessionsAction pairingsAction)
       logValueF -- TODO: handle errors

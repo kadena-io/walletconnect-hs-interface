@@ -28,24 +28,14 @@ import qualified Language.Javascript.JSaddle   as JSaddle
 
 import WalletConnect.Common
 
--- Note on isController
--- https://github.com/WalletConnect/walletconnect-docs/blob/main/docs/protocol/tech-spec.md
--- If you notice the proposer is identified by a controller boolean. When false
--- it means that the proposer will not control the settled session which means
--- that it does not update state, upgrade permissions and is bounded by the
--- permissions.
-clientInit :: Maybe Text -> Text -> Bool -> JSM JSVal
-clientInit mRelayUrl projectId isController = do
-  wcc <- jsg "WalletConnectClient"
-  client <- wcc ! "Client"
+clientInit :: Maybe Text -> Text -> JSM JSVal
+clientInit mRelayUrl projectId = do
+  client <- jsg "window" ! "@walletconnect/sign-client" ! "SignClient"
   args <- do
     o <- create
     (o <# "logger") ("debug" :: Text)
-    -- The default specified in client (relay.wallet-connect.com) does not work
-    -- so always specify one here.
-    (o <# "relayUrl") (fromMaybe "wss://relay.walletconnect.org" mRelayUrl)
+    forM mRelayUrl $ \ r -> (o <# "relayUrl") r
     (o <# "projectId") projectId
-    (o <# "controller") isController
     pure o
   client ^. js1 "init" args
 
