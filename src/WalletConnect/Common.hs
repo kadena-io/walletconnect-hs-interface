@@ -16,11 +16,18 @@ type Method = Text
 type Topic = Text
 type PublicKey = Text
 
+-- Should never actually be using this
+data Redirect = Redirect
+  { _redirect_native :: Maybe Text
+  , _redirect_universal :: Maybe Text
+  } deriving (Show, Generic)
+
 data Metadata = Metadata
   { _metadata_name :: Text
+  , _metadata_description :: Text
   , _metadata_url :: Text
   , _metadata_icons :: [Text]
-  , _metadata_description :: Text
+  , _metadata_redirect :: Maybe Redirect
   }
   deriving (Show, Generic)
 
@@ -46,6 +53,13 @@ data Pairing = Pairing
   }
 
 type PairingURI = Text
+
+instance A.ToJSON Redirect where
+  toJSON = A.genericToJSON compactEncoding
+  toEncoding = A.genericToEncoding compactEncoding
+
+instance A.FromJSON Redirect where
+  parseJSON = A.genericParseJSON compactEncoding
 
 instance A.ToJSON Metadata where
   toJSON = A.genericToJSON compactEncoding
