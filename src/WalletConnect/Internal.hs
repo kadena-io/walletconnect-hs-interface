@@ -46,10 +46,14 @@ getMetadataPublicKey v = liftJSM $ do
 
 getMetadata :: (MonadJSM m) => JSVal -> m Metadata
 getMetadata v = liftJSM $ do
-  mMetadata <- mapM fromJSVal =<< maybeNullOrUndefined =<< v ! "metadata"
+  getMetadata' =<< v ! "metadata"
+
+getMetadata' :: (MonadJSM m) => JSVal -> m Metadata
+getMetadata' meta = liftJSM $ do
+  mMetadata <- mapM fromJSVal =<< maybeNullOrUndefined meta
   pure $ case A.fromJSON <$> join mMetadata of
     Just (A.Success m) -> m
-    _ -> Metadata "unknown" "" [] ""
+    _ -> Metadata "unknown" "" "" [] Nothing
 
 getPermissions :: (MonadJSM m) => JSVal -> m Permissions
 getPermissions obj = liftJSM $ do
