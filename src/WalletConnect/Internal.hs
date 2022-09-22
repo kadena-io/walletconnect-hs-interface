@@ -76,7 +76,13 @@ makePairing client pairing = liftJSM $ do
       args <- do
         o <- create
         (o <# "topic") topic
-        (o <# "reason") ("USER_DISCONNECTED" :: Text) -- todo
+        (o <# "reason") ("User disconnected." :: Text) -- todo
+        reason <- do
+          o <- create
+          (o <# "code") 6000
+          (o <# "message") "User disconnected."
+          pure o
+        (o <# "reason") reason
         pure o
       pairing <- client ! "pairing"
       void $ pairing ^. js1 "delete" args
@@ -135,9 +141,9 @@ doRespond client topic id' result = do
         Left _ -> do
           error <- do
             o <- create
-            -- JSONRPC_REQUEST_METHOD_REJECTED
-            (o <# "message") ("User rejected the request." :: Text)
-            (o <# "code") (4001 :: Int) -- 4000 (EIP-1193)
+            -- USER_REJECTED
+            (o <# "message") ("User rejected." :: Text)
+            (o <# "code") (5000 :: Int)
             pure o
           (o <# "error") error
         Right v -> (o <# "result") v
