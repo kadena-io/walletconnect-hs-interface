@@ -55,21 +55,20 @@ getMetadata' meta = liftJSM $ do
     Just (A.Success m) -> m
     _ -> Metadata "unknown" "" "" [] Nothing
 
-getPermissions :: (MonadJSM m) => JSVal -> m Permissions
-getPermissions obj = liftJSM $ do
-  v <- fromJSValUnchecked =<< obj ! "permissions"
-  pure $ case A.fromJSON v of
-    A.Error _ -> Permissions [] []
-    A.Success p -> p
+fromJSValOrMempty :: (MonadJSM m, A.FromJSON a, Monoid a) => JSVal -> m a
+fromJSValOrMempty obj = liftJSM $ do
+  mObj <- mapM fromJSVal =<< maybeNullOrUndefined obj
+  pure $ case A.fromJSON <$> join mObj of
+    Just (A.Success m) -> m
+    _ -> mempty
 
 makePairing :: MonadJSM m => JSVal -> JSVal -> m Pairing
 makePairing client pairing = liftJSM $ do
   -- logValue "makePairing"
-  -- logValue pairing
   topic <- valToText =<< pairing ! "topic"
-  peer <- valToText =<< flip (!) "publicKey" =<< pairing ! "peer"
-  state <- getMetadata =<< pairing ! "state"
-  permissions <- getPermissions pairing
+  peerMeta <- getMetadata' =<< pairing ! "peerMetadata"
+  isActive <- valToBool =<< pairing ! "active"
+  expiry <- fromJSValUnchecked =<< pairing ! "expiry"
   let
     connect = void . doConnect client (Just topic)
     delete = do
@@ -81,21 +80,17 @@ makePairing client pairing = liftJSM $ do
         pure o
       pairing <- client ! "pairing"
       void $ pairing ^. js1 "delete" args
-  pure $ Pairing topic peer state permissions connect delete
+  pure $ Pairing topic (Relay "" Nothing) peerMeta isActive expiry connect delete
 
-doConnect :: JSVal -> Maybe Topic -> (Permissions, Metadata) -> JSM JSVal
-doConnect client mTopic (permissions, metadata) = do
+doConnect :: JSVal -> Maybe Topic -> RequiredNamespaces -> JSM JSVal
+doConnect client mTopic namespaces = do
   -- logValue "doConnect"
+
   args <- do
     o <- create
-    (o <# "permissions") =<< toJSVal (A.toJSON permissions)
-    (o <# "metadata") =<< toJSVal (A.toJSON metadata)
-    forM mTopic $ \topic -> do
-      pairing <- do
-        o <- create
-        (o <# "topic") topic
-        pure o
-      (o <# "pairing") pairing
+    (o <# "requiredNamespaces") =<< toJSVal (A.toJSON namespaces)
+    forM mTopic $ \pairingTopic -> do
+      (o <# "pairingTopic") pairingTopic
     pure o
   -- logValue args
   client ^. js1 "connect" args
