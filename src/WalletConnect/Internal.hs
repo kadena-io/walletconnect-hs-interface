@@ -84,8 +84,7 @@ makePairing client pairing = liftJSM $ do
           pure o
         (o <# "reason") reason
         pure o
-      pairing <- client ! "pairing"
-      void $ pairing ^. js1 "delete" args
+      void $ client ^. js1 "disconnect" args
   pure $ Pairing topic (Relay "" Nothing) peerMeta isActive expiry connect delete
 
 doConnect :: JSVal -> Maybe Topic -> RequiredNamespaces -> JSM JSVal
