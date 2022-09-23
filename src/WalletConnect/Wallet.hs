@@ -47,15 +47,18 @@ import WalletConnect.Internal
 data Session = Session
   { _session_topic :: Topic
   , _session_disconnect :: JSM ()
+  , _session_self :: (PublicKey, Metadata)
   , _session_peer :: (PublicKey, Metadata)
+  , _session_namespaces :: Namespaces
+  , _session_requiredNamespaces :: RequiredNamespaces
   }
 
 data Proposal = Proposal
-  { _proposal_topic :: Topic
-  , _proposal_ttl :: Int
+  { _proposal_id :: JSVal
+  , _proposal_topic :: Topic
   , _proposal_proposer :: (PublicKey, Metadata)
-  , _proposal_permissions :: Permissions
-  , _proposal_approval :: (Either () [Account] -> JSM ())
+  , _proposal_requiredNamespaces :: RequiredNamespaces
+  , _proposal_approval :: (Either () Namespaces) -> JSM ()
   }
 
 data WalletConnect t = WalletConnect
@@ -134,17 +137,25 @@ makeSession client session = do
   --   logValue session
   topic <- liftJSM $ valToText =<< session ! "topic"
   peer <- liftJSM $ getMetadataPublicKey =<< session ! "peer"
+  self <- liftJSM $ getMetadataPublicKey =<< session ! "self"
+  namespaces <- liftJSM $ fromJSValOrMempty =<< session ! "namespaces"
+  requiredNamespaces <- liftJSM $ fromJSValOrMempty =<< session ! "requiredNamespaces"
   let
     delete = do
       -- logValue $ "doing disconnect of " <> topic
       args <- do
         o <- create
         (o <# "topic") topic
-        (o <# "reason") ("USER_DISCONNECTED" :: Text) -- todo
+        reason <- do
+          o <- create
+          (o <# "code") 6000
+          (o <# "message") "User disconnected."
+          pure o
+        (o <# "reason") reason
         pure o
       void $ client ^. js1 "disconnect" args
 
-  return $ Session topic delete peer
+  return $ Session topic delete self peer namespaces requiredNamespaces
 
 subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsAction = fun $ \_ _ (client:_) -> do
   -- logValue ("subscribeToEvents" :: Text)
@@ -152,59 +163,54 @@ subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsActi
 
   liftIO $ putMVar clientMVar client
 
-  wcc <- jsg "WalletConnectClient"
-  events <- wcc ! "CLIENT_EVENTS"
-  pairing <- events ! "pairing"
-  session <- events ! "session"
+  events <- jsg "window" ! "@walletconnect/sign-client" ! "SIGN_CLIENT_EVENTS"
 
   let
-    onProposal = fun $ \_ _ [proposal] -> do
+    onProposal = fun $ \_ _ [proposal'] -> do
+      proposal <- proposal' ! "params"
       -- logValue "onProposal"
       -- logValue proposal
-      topic <- valToText =<< proposal ! "topic"
-      permissions <- getPermissions proposal
-      ttl <- fromJSValUnchecked =<< proposal ! "ttl"
-      proposer <- do
-        getMetadataPublicKey =<< proposal ! "proposer"
-      liftIO $ proposalAction $ Proposal topic ttl proposer permissions (either (doReject proposal) (doApprove proposal))
+      i <- proposal ! "id"
+      topic <- valToText =<< proposal ! "pairingTopic"
+      requiredNamespaces <- fromJSValOrMempty =<< proposal ! "requiredNamespaces"
+      proposer <- getMetadataPublicKey =<< proposal ! "proposer"
+      liftIO $ proposalAction $ Proposal i topic proposer requiredNamespaces (either (doReject i) (doApprove i))
 
-    doReject proposal _ = do
+    doReject i _ = do
       args <- do
         o <- create
-        (o <# "proposal") proposal
-        (o <# "reason") "NOT_APPROVED"
+        (o <# "id") i
+        reason <- do
+          o <- create
+          (o <# "code") 5000
+          (o <# "message") "User rejected."
+          pure o
+        (o <# "reason") reason
         pure o
       void $ client ^. js1 "reject" args
 
-    doApprove proposal accounts = do
-      response <- do
-        o <- create
-        state <- do
-          o <- create
-          (o <# "accounts") accounts
-          pure o
-        (o <# "state") state
-        pure o
+    doApprove i namespaces = do
       args <- do
         o <- create
-        (o <# "proposal") proposal
-        (o <# "response") response
+        (o <# "id") i
+        (o <# "namespaces") (A.toJSON namespaces)
         pure o
       void $ client ^. js1 "approve" args
 
-  proposal <- session ! "proposal"
+  proposal <- events ! "session_proposal"
   client ^. js2 "on" proposal onProposal
 
   let
     onRequest = fun $ \_ _ [requestEvent] -> do
       -- logValue "onRequest"
       -- logValue requestEvent
+      id' <- requestEvent ! "id"
       topic <- valToText =<< requestEvent ! "topic"
-      chainId <- valToText =<< requestEvent ! "chainId"
-      req <- requestEvent ! "request"
-      id' <- req ! "id"
+      params <- requestEvent ! "params"
+      chainId <- valToText =<< params ! "chainId"
+      req <- params ! "request"
       method <- valToText =<< req ! "method"
-      params <- fromJSValUnchecked =<< req ! "params"
+      reqParams <- fromJSValUnchecked =<< req ! "params"
       let
         doSend v = do
           result <- mapM toJSVal v
@@ -212,10 +218,10 @@ subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsActi
 
       liftIO $ reqAction
         ( topic
-        , Request chainId method params
+        , Request chainId method reqParams
         , doSend)
 
-  request <- session ! "request"
+  request <- events ! "session_request"
   client ^. js2 "on" request onRequest
 
   let onPairingSync = fun $ \_ _ _ -> do
@@ -231,10 +237,9 @@ subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsActi
         liftIO $ pairingsAction tp
 
   readPairings
-  sync <- pairing ! "sync"
-  void $ client ^. js2 "on" sync onPairingSync
-  deleted <- pairing ! "deleted"
-  void $ client ^. js2 "on" deleted onPairingSync
+  ev1 <- events ! "pairing_delete"
+  ev2 <- events ! "pairing_expire"
+  forM [ev1, ev2] $ \ev -> client ^. js2 "on" ev onPairingSync
 
   let onSync = fun $ \_ _ _ -> do
         -- logValue "onSync"
@@ -249,5 +254,7 @@ subscribeToEvents clientMVar reqAction proposalAction sessionAction pairingsActi
         liftIO $ sessionAction tp
 
   readSessions
-  sync <- session ! "sync"
-  void $ client ^. js2 "on" sync onSync
+
+  ev3 <- events ! "session_delete"
+  ev4 <- events ! "session_expire"
+  void $ forM [ev3, ev4] $ \ev -> client ^. js2 "on" ev onSync
